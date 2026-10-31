@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NeedFiller – Rent what you need, earn from what you don’t</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛋️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app"></div><div id="m"></div><div id="toast" hidden></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+const SB=supabase.createClient('https://rbkqefnkyywcmlftloyd.supabase.co','sb_publishable_EIFNuBGo9V8uW-4bxBNYDg_AXctl8vY');
+const ICON={Furniture:'🛋️',Kitchen:'🍳',Electronics:'📽️',Decoration:'🪞','Party Items':'🎉',Tools:'🛠️',Other:'📦'};
+let me=null,v='home',cat='All',q='',loc='',mx='',sel=0,ready=false,D={cats:[],items:[],owners:{},revs:[],av:[],bk:[],pay:{},nt:[],cp:[],us:[],rv:new Set()};
+const $=s=>document.querySelector(s),M=n=>'₹'+Number(n).toLocaleString('en-IN'),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const today=()=>new Date().toISOString().slice(0,10);
+const toast=m=>{const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,3600)};
+const modal=h=>$('#m').innerHTML=h?`<div class="modal" onclick="if(event.target==this)modal()"><div class="box">${h}</div></div>`:'';
+const tg=s=>`<span class="tag ${/Confirmed|Completed|Approved|Refunded|Resolved/.test(s)?'ok':/Pending|Awaiting|Open|Held|Accepted/.test(s)?'w':''}">${s}</span>`;
+const st=(l,n)=>`<div class="stat"><b>${n}</b>${l}</div>`;
+const tb=(h,rows)=>rows.length?`<div class="tw"><table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</table></div>`:'<p class="mut">Nothing here yet.</p>';
+const days=(a,z)=>Math.round((new Date(z)-new Date(a))/864e5)+1;
+const gi=id=>D.items.find(i=>i.item_id==id),gu=id=>D.us.find(u=>u.user_id==id),gb=id=>D.bk.find(b=>b.booking_id==id);
+const cname=id=>(D.cats.find(c=>c.category_id==id)||{}).name,icon=i=>ICON[cname(i.category_id)]||'📦';
+const pic=i=>i.photo_url?`<img src="${esc(i.photo_url)}" alt="${esc(i.title)}">`:icon(i);
+const oname=id=>D.owners[id]||'Owner',uname=id=>(gu(id)||{}).name||'Renter';
+const rate=i=>{const r=D.revs.filter(x=>x.item_id==i.item_id);return r.length?(r.reduce((s,x)=>s+x.rating,0)/r.length).toFixed(1):'New'};
+const lab=b=>b.status=='Pending'?(b.owner_accepted?'Accepted – pay now':'Awaiting owner'):b.status;
+const sv=()=>{try{return JSON.parse(localStorage.getItem('nf_sv_'+me.user_id))||[]}catch(e){return[]}};
+const go=x=>{v=x;render();scrollTo(0,0)},sq=()=>{q=$('#q').value;render()};
+
+async function load(){
+  const g=async(t,f)=>{const r=await f(SB.from(t).select('*'));return r.data||[]};
+  const [cats,items,own,revs,av]=await Promise.all([g('categories',x=>x.order('category_id')),g('items',x=>x.order('item_id')),g('owner_names',x=>x),g('item_reviews',x=>x),g('availability',x=>x)]);
+  Object.assign(D,{cats,items,revs,av,owners:Object.fromEntries(own.map(o=>[o.user_id,o.name]))});
+  if(me){const [bk,pay,nt,cp,us,rv]=await Promise.all([g('bookings',x=>x.order('booking_id',{ascending:false})),g('payments',x=>x),g('notifications',x=>x.eq('user_id',me.user_id).order('created_at',{ascending:false})),g('complaints',x=>x),g('users',x=>x),g('reviews',x=>x)]);
+    Object.assign(D,{bk,nt,cp,us,pay:Object.fromEntries(pay.map(p=>[p.booking_id,p])),rv:new Set(rv.map(r=>r.booking_id))})}
+  else Object.assign(D,{bk:[],pay:{},nt:[],cp:[],us:[],rv:new Set()});
+}
+async function setUser(s){
+  const id=s&&s.user&&s.user.id;if(ready&&id==(me&&me.user_id))return;
+  me=null;
+  if(id){const {data}=await SB.from('users').select('*').eq('user_id',id).single();if(data)me={...data,role:data.role.toLowerCase()}}
+  await load();ready=true;if(!me)v='home';render();
+}
+async function act(p,ok){const {error}=await p;if(error){toast(error.message);return false}await load();render();if(ok)toast(ok);return true}
+
+function render(){
+  if(!ready){$('#app').innerHTML='<p class="mut" style="padding:60px;text-align:center">Loading NeedFiller…</p>';return}
+  const un=D.nt.filter(n=>!n.is_read).length;
+  $('#app').innerHTML=`<header><div class="wrap nav"><span class="logo" onclick="go('home')">NeedFiller</span><span class="sp"></span>${me?`<button class="o s" onclick="go('dash')">Dashboard</button><button class="o s" onclick="notes()">🔔 ${un}</button><span class="mut">${esc(me.name)} (${me.role})</span><button class="g s" onclick="SB.auth.signOut()">Log out</button>`:`<button onclick="auth()">Sign in</button>`}</div></header>`+(v=='home'||!me?home():dash())+`<footer>NeedFiller · Indus University project</footer>`;
+}
+const card=i=>`<div class="card c" onclick="show(${i.item_id})"><div class="ph">${pic(i)}</div><b>${esc(i.title)}</b><div class="mut">${esc(i.location)} · ★ ${rate(i)}</div><div class="pr">${M(i.price_per_day)}/day</div></div>`;
+
+function home(){
+  const L=D.items.filter(i=>i.status=='Approved'&&(cat=='All'||cname(i.category_id)==cat)&&(!loc||i.location==loc)&&(!mx||i.price_per_day<=+mx)&&i.title.toLowerCase().includes(q.toLowerCase()));
+  const locs=[...new Set(D.items.filter(i=>i.status=='Approved').map(i=>i.location))];
+  return `<div class="hero"><div class="wrap"><h1>Rent what you need.<br>Earn from what you don’t.</h1><p class="mut" style="font-size:16px">Furniture, kitchen gear, electronics and party items from people near you.</p><div class="sb"><input id="q" placeholder="Search items to rent…" value="${esc(q)}" aria-label="Search items" onkeydown="if(event.key=='Enter')sq()"><button onclick="sq()">Search</button></div></div></div>
+  <div class="wrap"><div class="chips">${['All',...D.cats.map(c=>c.name)].map(c=>`<span class="chip ${c==cat?'on':''}" tabindex="0" onclick="cat='${c}';render()" onkeydown="if(event.key=='Enter')this.click()">${c}</span>`).join('')}</div>
+  <div class="row" style="max-width:440px"><select aria-label="Location" onchange="loc=this.value;render()"><option value="">All locations</option>${locs.map(l=>`<option ${l==loc?'selected':''}>${esc(l)}</option>`).join('')}</select><select aria-label="Max price" onchange="mx=this.value;render()">${[['','Any price'],[200,'Up to ₹200/day'],[400,'Up to ₹400/day'],[600,'Up to ₹600/day']].map(o=>`<option value="${o[0]}" ${o[0]==mx?'selected':''}>${o[1]}</option>`).join('')}</select></div>
+  <div class="grid">${L.map(card).join('')||'<p class="mut">No items yet. Owners can list items after the admin approves their account.</p>'}</div>
+  <div class="sec"><h3>How renting works</h3><div class="flow">${['Search','Select','Choose dates','Confirm','Pay','Use item','Return & deposit back'].map((s,k)=>`<div><b>${k+1}</b>${s}</div>`).join('')}</div><p class="mut">The owner confirms your request first. You pay rent plus a refundable deposit only after that.</p></div></div>`;
+}
+
+function show(id){
+  sel=id;const i=gi(id),w=D.av.filter(a=>a.item_id==id),rv=D.revs.filter(r=>r.item_id==id),mn=w.length?w.map(a=>a.available_from).sort()[0]:today(),mxd=w.length?w.map(a=>a.available_to).sort().pop():'';
+  modal(`<div class="ph" style="height:130px">${pic(i)}</div><div class="row" style="align-items:center"><h2>${esc(i.title)}</h2><span class="pr" style="flex:none">${M(i.price_per_day)}/day</span></div>
+  <p class="mut">Owner: ${esc(oname(i.owner_id))} (rating ${rate(i)} / 5)<br>Pickup: ${esc(i.location)}<br>Refundable deposit: ${M(i.deposit_amount)}<br>Available: ${w.length?w.map(a=>a.available_from+' to '+a.available_to).join(', '):'any dates'}</p>
+  <div class="row"><div><label for="a">Start date</label><input type="date" id="a" min="${mn}" ${mxd?`max="${mxd}"`:''} onchange="calc()"></div><div><label for="z">End date</label><input type="date" id="z" min="${mn}" ${mxd?`max="${mxd}"`:''} onchange="calc()"></div></div>
+  <p id="tot" class="mut" style="margin:10px 0">Select start and end date</p>
+  <div class="row"><button onclick="book()">Book now</button><button class="g" onclick="save(${id})">${me&&sv().includes(id)?'♥ Saved':'♡ Save'}</button></div>
+  <h3 style="margin-top:18px;font-size:16px">Reviews</h3>${rv.map(r=>`<p class="mut"><b>${esc(r.reviewer)}</b> ${'★'.repeat(r.rating)} ${esc(r.comment)}</p>`).join('')||'<p class="mut">No reviews yet.</p>'}
+  <button class="o" style="margin-top:14px;width:100%" onclick="modal()">Close</button>`);
+}
+function calc(){const i=gi(sel),a=$('#a').value,z=$('#z').value;if(!a||!z)return;if(z<a){$('#tot').textContent='End date must be on or after the start date';return}
+  const n=days(a,z);$('#tot').innerHTML=`Rent ${n} day${n>1?'s':''} × ${M(i.price_per_day)} = <b>${M(n*i.price_per_day)}</b><br>Refundable deposit ${M(i.deposit_amount)} · Total payable ${M(n*i.price_per_day+Number(i.deposit_amount))}`}
+async function book(){
+  if(!me)return auth();
+  if(me.role!='renter')return toast('Sign in as a renter to book items');
+  if(!me.approved)return toast('Your account is waiting for admin approval');
+  const a=$('#a').value,z=$('#z').value;if(!a||!z||z<a)return toast('Choose a valid start and end date');
+  if(await act(SB.from('bookings').insert({renter_id:me.user_id,item_id:sel,start_date:a,end_date:z}),'Request sent. The owner will review it.')){modal();v='dash';render()}
+}
+function save(id){if(!me||me.role!='renter')return toast('Sign in as a renter to save items');const s=sv(),k=s.indexOf(id);k<0?s.push(id):s.splice(k,1);try{localStorage.setItem('nf_sv_'+me.user_id,JSON.stringify(s))}catch(e){}show(id);render()}
+
+function auth(reg){
+  modal(`<h2>${reg?'Create account':'Sign in'}</h2>${reg?'<label for="n">Name</label><input id="n"><label for="ro">I want to</label><select id="ro"><option value="renter">Rent items</option><option value="owner">List items</option></select>':''}<label for="e">Email</label><input id="e" type="email"><label for="pw">Password ${reg?'(6+ characters)':''}</label><input id="pw" type="password">
+  <button style="width:100%;margin-top:14px" onclick="${reg?'reg()':'login()'}">${reg?'Create account':'Sign in'}</button>
+  <p class="mut" style="margin-top:12px">${reg?'Have an account? <a href="#" onclick="auth();return false">Sign in</a>':'New here? <a href="#" onclick="auth(1);return false">Create an account</a>'}</p>`);
+}
+async function login(){const pv=v;v='dash';const {error}=await SB.auth.signInWithPassword({email:$('#e').value.trim(),password:$('#pw').value});if(error){v=pv;return toast(error.message)}modal()}
+async function reg(){
+  const n=$('#n').value.trim(),e=$('#e').value.trim(),p=$('#pw').value;
+  if(!n||!/\S+@\S+\.\S+/.test(e)||p.length<6)return toast('Enter your name, a valid email and a password of 6+ characters');
+  const pv=v;v='dash';const {data,error}=await SB.auth.signUp({email:e,password:p,options:{data:{name:n,role:$('#ro').value=='owner'?'Owner':'Renter'}}});
+  if(error){v=pv;return toast(error.message)}
+  modal();if(!data.session){v='home';render();toast('Check your email to confirm your account, then sign in.')}else toast('Account created. An admin must approve it before you can book or list.');
+}
+
+function dash(){return `<div class="wrap" style="padding-top:28px">${!me.approved&&me.role!='admin'?'<p class="mut" style="background:#fff0e3;padding:10px 14px;border-radius:10px;margin-bottom:12px">Your account is waiting for admin approval. You can browse now, and book or list once it is approved.</p>':''}${me.role=='owner'?owner():me.role=='renter'?renter():admin()}</div>`}
+function owner(){
+  const mi=D.items.filter(i=>i.owner_id==me.user_id),mb=D.bk.filter(b=>mi.some(i=>i.item_id==b.item_id)),ea=mb.filter(b=>D.pay[b.booking_id]).reduce((s,b)=>s+Number(D.pay[b.booking_id].amount)-Number(D.pay[b.booking_id].commission),0);
+  return `<h2>Owner dashboard</h2><div class="stats">${st('Listed items',mi.length)}${st('Active requests',mb.filter(b=>b.status=='Pending'&&!b.owner_accepted).length)}${st('Total earnings',M(ea))}</div><button onclick="listForm()">+ List item</button>
+  <div class="sec"><h3>Rental requests</h3>${tb(['Item','Renter','Dates','Status',''],mb.map(b=>[esc(gi(b.item_id).title),esc(uname(b.renter_id)),b.start_date+' to '+b.end_date,tg(lab(b)),b.status=='Pending'&&!b.owner_accepted?`<button class="s" onclick="acc(${b.booking_id})">Accept</button> <button class="r s" onclick="rej(${b.booking_id})">Reject</button>`:b.status=='Confirmed'?`<button class="s" onclick="ret(${b.booking_id})">Mark returned</button>`:'']))}</div>
+  <div class="sec"><h3>My items</h3>${tb(['Item','Price/day','Deposit','Status'],mi.map(i=>[esc(i.title),M(i.price_per_day),M(i.deposit_amount),tg(i.status)]))}</div>
+  <div class="sec"><h3>Transactions</h3>${tb(['Item','Rent','Commission','You earn','Deposit'],mb.filter(b=>D.pay[b.booking_id]).map(b=>{const p=D.pay[b.booking_id];return[esc(gi(b.item_id).title),M(p.amount),M(p.commission),M(p.amount-p.commission),tg(p.deposit_status)]}))}</div>`;
+}
+function renter(){
+  const mb=D.bk.filter(b=>b.renter_id==me.user_id),s=sv().map(gi).filter(Boolean);
+  return `<h2>Renter dashboard</h2><div class="stats">${st('Current rentals',mb.filter(b=>b.status=='Pending'||b.status=='Confirmed').length)}${st('Rental history',mb.filter(b=>b.status=='Completed').length)}${st('Saved items',s.length)}</div><button onclick="go('home')">Browse items</button>
+  <div class="sec"><h3>My bookings</h3>${tb(['Item','Dates','Status',''],mb.map(b=>[esc(gi(b.item_id).title),b.start_date+' to '+b.end_date,tg(lab(b)),b.status=='Pending'&&b.owner_accepted?`<button class="s" onclick="payForm(${b.booking_id})">Pay now</button>`:b.status=='Pending'?`<button class="r s" onclick="rej(${b.booking_id})">Cancel</button>`:b.status=='Confirmed'?`<button class="o s" onclick="issue(${b.booking_id})">Report issue</button>`:b.status=='Completed'&&!D.rv.has(b.booking_id)?`<button class="s" onclick="revForm(${b.booking_id})">Review</button>`:'']))}</div>
+  <div class="sec"><h3>Saved items</h3><div class="grid" style="margin-top:0">${s.map(card).join('')||'<p class="mut">Save items from their detail page.</p>'}</div></div>
+  <div class="sec"><h3>Payment history</h3>${tb(['Item','Rent','Deposit','Deposit status'],mb.filter(b=>D.pay[b.booking_id]).map(b=>{const p=D.pay[b.booking_id];return[esc(gi(b.item_id).title),M(p.amount),M(p.deposit_amount),tg(p.deposit_status)]}))}</div>`;
+}
+function admin(){
+  const pi=D.items.filter(i=>i.status=='Pending'),pu=D.us.filter(u=>!u.approved),ps=Object.values(D.pay),com=ps.reduce((s,p)=>s+Number(p.commission),0);
+  const bc=D.cats.map(c=>[c.name,ps.filter(p=>{const b=gb(p.booking_id);return b&&gi(b.item_id)&&gi(b.item_id).category_id==c.category_id}).reduce((s,p)=>s+Number(p.amount),0)]),top=Math.max(1,...bc.map(x=>x[1]));
+  return `<h2>Admin dashboard</h2><div class="stats">${st('Users',D.us.length)}${st('Listings',D.items.length)}${st('Active rentals',D.bk.filter(b=>b.status=='Confirmed').length)}${st('Commission (10%)',M(com))}${st('Pending approvals',pi.length+pu.length)}${st('Open complaints',D.cp.filter(c=>c.status=='Open').length)}</div>
+  <div class="sec"><h3>Approvals</h3>${tb(['Type','Details',''],[...pi.map(i=>['Listing',esc(i.title)+' · '+M(i.price_per_day)+'/day',`<button class="s" onclick="appI(${i.item_id},'Approved')">Approve</button> <button class="r s" onclick="appI(${i.item_id},'Rejected')">Reject</button>`]),...pu.map(u=>['User',esc(u.name)+' ('+u.role+')',`<button class="s" onclick="appU('${u.user_id}')">Approve</button>`])])}</div>
+  <div class="sec"><h3>Complaints</h3>${tb(['Raised by','Booking','Issue','Status',''],D.cp.map(c=>[esc(uname(c.user_id)),'#'+c.booking_id,esc(c.issue),tg(c.status),c.status=='Open'?`<button class="s" onclick="resolve(${c.complaint_id})">Resolve</button>`:'']))}</div>
+  <div class="sec"><h3>Payments</h3>${tb(['Booking','Rent','Commission','Deposit'],ps.map(p=>['#'+p.booking_id,M(p.amount),M(p.commission),tg(p.deposit_status)]))}</div>
+  <div class="sec"><h3>Revenue by category</h3>${bc.map(x=>`<p class="mut">${x[0]} · ${M(x[1])}</p><div class="bar" style="width:${x[1]/top*100}%"></div>`).join('')}</div>`;
+}
+
+const acc=id=>act(SB.rpc('accept_booking',{p_id:id}),'Request accepted'),rej=id=>act(SB.rpc('cancel_booking',{p_id:id}),'Booking cancelled'),ret=id=>act(SB.rpc('return_booking',{p_id:id}),'Marked returned. Deposit refunded.');
+function payForm(id){
+  const b=gb(id),i=gi(b.item_id),n=days(b.start_date,b.end_date),rent=n*i.price_per_day;
+  modal(`<h2>Complete booking</h2><div class="ph" style="height:80px">${pic(i)}</div><b>${esc(i.title)}</b><p class="mut">${b.start_date} to ${b.end_date} (${n} day${n>1?'s':''}) · Pickup: ${esc(i.location)}</p>
+  <table style="margin:10px 0"><tr><td>Rent (${n} × ${M(i.price_per_day)})</td><td>${M(rent)}</td></tr><tr><td>Refundable deposit</td><td>${M(i.deposit_amount)}</td></tr><tr><td><b>Total payable</b></td><td class="pr">${M(rent+Number(i.deposit_amount))}</td></tr></table>
+  <label for="pm">Payment method</label><select id="pm"><option>UPI</option><option>Debit / credit card</option><option>Net banking</option></select>
+  <p class="mut" style="margin-top:8px">Payments are simulated until a payment gateway is added.</p>
+  <button style="width:100%;margin-top:12px" onclick="payNow(${id})">Pay securely</button><button class="o" style="width:100%;margin-top:8px" onclick="modal()">Cancel</button>`);
+}
+async function payNow(id){
+  const i=gi(gb(id).item_id);
+  if(await act(SB.rpc('pay_booking',{p_id:id})))modal(`<div style="text-align:center"><div class="ok-ring">✓</div><h2>Booking confirmed!</h2><p class="mut" style="margin:8px 0">Reference <b>NF-${1000+id}</b><br>Pickup in ${esc(i.location)}. Your ${M(i.deposit_amount)} deposit is refunded after you return the item.</p><button onclick="modal()">Done</button></div>`);
+}
+function revForm(id){modal(`<h2>Rate this rental</h2><label for="rt">Rating</label><select id="rt">${[5,4,3,2,1].map(x=>`<option>${x}</option>`).join('')}</select><label for="rc">Comment</label><input id="rc"><button style="width:100%;margin-top:14px" onclick="revSave(${id})">Submit review</button>`)}
+async function revSave(id){if(await act(SB.from('reviews').insert({booking_id:id,rating:+$('#rt').value,comment:$('#rc').value.trim()||'No comment'}),'Review submitted'))modal()}
+function issue(id){modal(`<h2>Report an issue</h2><label for="ic">What went wrong?</label><input id="ic"><button style="width:100%;margin-top:14px" onclick="issueSave(${id})">Send complaint</button>`)}
+async function issueSave(id){const t=$('#ic').value.trim();if(!t)return toast('Describe the issue first');if(await act(SB.from('complaints').insert({user_id:me.user_id,booking_id:id,issue:t}),'Complaint sent to the admin'))modal()}
+function listForm(){
+  if(!me.approved)return toast('Your account is waiting for admin approval');
+  modal(`<h2>List an item</h2><label for="t">Title</label><input id="t"><div class="row"><div><label for="c">Category</label><select id="c">${D.cats.map(c=>`<option value="${c.category_id}">${c.name}</option>`).join('')}</select></div><div><label for="l">Pickup area</label><input id="l" placeholder="Ahmedabad"></div></div>
+  <div class="row"><div><label for="p">Price per day (₹)</label><input id="p" type="number" min="1"></div><div><label for="d">Deposit (₹)</label><input id="d" type="number" min="0"></div></div>
+  <div class="row"><div><label for="f">Available from</label><input id="f" type="date" value="${today()}"></div><div><label for="e2">Available to</label><input id="e2" type="date"></div></div>
+  <label for="ph">Photo (optional)</label><input id="ph" type="file" accept="image/*"><button style="width:100%;margin-top:14px" onclick="listSave()">Submit for approval</button>`);
+}
+async function listSave(){
+  const t=$('#t').value.trim(),l=$('#l').value.trim(),p=+$('#p').value,d=+($('#d').value||0),f=$('#f').value,e=$('#e2').value,file=$('#ph').files[0];
+  if(!t||!l||p<1||!f||!e||e<f)return toast('Fill in every field with valid values');
+  let url=null;
+  if(file){const path=`${me.user_id}/${Date.now()}-${file.name.replace(/[^\w.-]/g,'_')}`,u=await SB.storage.from('item-photos').upload(path,file);if(u.error)return toast('Photo upload failed: '+u.error.message);url=SB.storage.from('item-photos').getPublicUrl(path).data.publicUrl}
+  const r=await SB.from('items').insert({owner_id:me.user_id,category_id:+$('#c').value,title:t,location:l,price_per_day:p,deposit_amount:d,photo_url:url}).select().single();
+  if(r.error)return toast(r.error.message);
+  await SB.from('availability').insert({item_id:r.data.item_id,available_from:f,available_to:e});
+  modal();await load();render();toast('Submitted. It goes live once the admin approves.');
+}
+const appI=(id,s)=>act(SB.from('items').update({status:s}).eq('item_id',id)),appU=id=>act(SB.from('users').update({approved:true}).eq('user_id',id)),resolve=id=>act(SB.from('complaints').update({status:'Resolved',resolution:'Resolved by admin'}).eq('complaint_id',id));
+function notes(){
+  modal(`<h2>Notifications</h2>${D.nt.map(n=>`<p style="padding:8px 0;border-bottom:1px solid var(--line);${n.is_read?'color:var(--mut)':'font-weight:600'}">${esc(n.message)}</p>`).join('')||'<p class="mut">No notifications yet.</p>'}<button class="o" style="margin-top:14px;width:100%" onclick="modal()">Close</button>`);
+  if(D.nt.some(n=>!n.is_read))SB.from('notifications').update({is_read:true}).eq('user_id',me.user_id).eq('is_read',false).then(async()=>{await load();render()});
+}
+SB.auth.onAuthStateChange((e,s)=>{if(e=='SIGNED_IN'||e=='SIGNED_OUT')setTimeout(()=>setUser(s),0)});
+SB.auth.getSession().then(({data})=>setUser(data.session));
+render();
+</script>
+</body>
+</html>
